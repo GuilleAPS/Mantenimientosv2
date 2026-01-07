@@ -21,11 +21,11 @@ st.set_page_config(
 # Estilos CSS para mejorar la presentación visual
 st.markdown("""
     <style>
-   .stApp { background-color: #f0f2f6; }
+  .stApp { background-color: #f0f2f6; }
     div.stButton > button:first-child {
         background-color: #2c3e50; color: white; border-radius: 5px;
     }
-   .main-header {
+  .main-header {
         font-family: 'Helvetica', sans-serif; color: #1a237e; text-align: center;
     }
     </style>
@@ -46,10 +46,9 @@ def cargar_imagen_referencia():
     """
     Carga la imagen esquemática del camión.
     Usamos una URL estable de un diagrama vectorial para asegurar consistencia.
-    En un entorno local, esto sería: Image.open("assets/truck_blueprint.jpg")
     """
     # URL de un icono plano de camión (vectorial/line art) adecuado para diagramas
-    url_camion = "https://cdn-icons-png.flaticon.com/512/2555/2555013.png"
+    url_camion = "[https://cdn-icons-png.flaticon.com/512/2555/2555013.png](https://cdn-icons-png.flaticon.com/512/2555/2555013.png)"
     try:
         response = requests.get(url_camion)
         return Image.open(BytesIO(response.content))
@@ -71,7 +70,6 @@ def detectar_zona_clic(x, y, ancho_img, alto_img):
     
     # Definición de Bounding Boxes (Cajas delimitadoras)
     # Estas coordenadas deben calibrarse con la imagen específica usada.
-    # Para el icono de ejemplo:
     
     # Zona 1: Parte Frontal (Motor, Baterías, Aceite)
     # x: 0% a 35%, y: 20% a 80%
@@ -98,7 +96,7 @@ def obtener_categorias_por_zona(zona):
         "motor_sistema": ["baterias", "motor", "aceite", "filtros", "servicioc", "serviciot"],
         "rodamiento": ["llantas", "alineacion", "frenos", "suspension", "rotacion"],
         "carroceria_general": ["parrilla", "pintura", "luces", "limpieza", "general"],
-        "general": 
+        "general": ["general", "varios", "otros"]
     }
     return mapeo.get(zona,)
 
@@ -114,6 +112,8 @@ if archivo is not None:
         df['Fecha_ordinal'] = df['Fecha'].map(pd.Timestamp.toordinal)
         # Normalización de texto para búsquedas insensibles a mayúsculas
         df = df.astype(str).str.strip().str.lower()
+        # Convertir Km a numérico forzoso por si acaso
+        df['Km'] = pd.to_numeric(df['Km'], errors='coerce').fillna(0)
         
         vehiculos = sorted(df['Vehiculo'].unique())
         tipos_mantenimiento = sorted(df.unique())
@@ -134,7 +134,7 @@ if archivo is not None:
             if vehiculo_seleccionado!= st.session_state['vehiculo_activo']:
                 st.session_state['vehiculo_activo'] = vehiculo_seleccionado
                 st.session_state['filtro_parte'] = None
-                st.experimental_rerun()
+                st.rerun()
 
         # Filtrar DF por vehículo
         df_vehiculo = df[df['Vehiculo'] == vehiculo_seleccionado].sort_values('Fecha')
@@ -168,7 +168,7 @@ if archivo is not None:
                     
                     if zona!= st.session_state['filtro_parte']:
                         st.session_state['filtro_parte'] = zona
-                        st.experimental_rerun()
+                        st.rerun()
             
             # Indicador de estado del filtro
             zona_activa = st.session_state['filtro_parte']
@@ -176,7 +176,7 @@ if archivo is not None:
                 st.success(f"Filtro Activo: **{zona_activa.upper().replace('_', ' ')}**")
                 if st.button("🔄 Limpiar Filtro Visual"):
                     st.session_state['filtro_parte'] = None
-                    st.experimental_rerun()
+                    st.rerun()
             else:
                 st.info("Viendo: Todos los sistemas")
 
@@ -188,97 +188,105 @@ if archivo is not None:
             if zona_activa:
                 keywords = obtener_categorias_por_zona(zona_activa)
                 # Filtrar el DataFrame temporalmente para encontrar tipos que coincidan parcialmente
-                mask = df_vehiculo.apply(lambda x: any(k in x for k in keywords))
-                df_zona = df_vehiculo[mask]
-                
-                if not df_zona.empty:
-                    tipos_filtrados = df_zona.unique()
-                    st.caption(f"Mostrando mantenimientos relacionados con la zona seleccionada.")
-                else:
-                    st.warning(f"No hay registros históricos para la zona {zona_activa} en este vehículo.")
-
-            # Selector de Tipo (Ahora filtrado por la selección visual)
-            tipo_seleccionado = st.selectbox(
-                "Sub-categoría de Mantenimiento", 
-                tipos_filtrados,
-                index=0
-            )
-
-            # --- ANÁLISIS PREDICTIVO (CÓDIGO BASE MEJORADO) ---
-            sub_df = df_vehiculo == tipo_seleccionado].copy()
-
-            if len(sub_df) < 2:
-                st.warning("⚠️ Datos insuficientes para generar una predicción fiable (mínimo 2 registros).")
-                st.dataframe(sub_df]) # Mostrar descripción interna
-            else:
-                # Modelo Predictivo
-                X = sub_df[['Fecha_ordinal']]
-                y = sub_df['Km']
-                modelo = LinearRegression().fit(X, y)
-                
-                # Predicciones
-                sub_df['Km_predicho'] = modelo.predict(X)
-                coef = modelo.coef_ # Pendiente (Km por día)
-                intercept = modelo.intercept_
-                
-                # Visualización Gráfica
-                fig, ax = plt.subplots(figsize=(10, 4))
-                ax.scatter(sub_df['Fecha'], sub_df['Km'], color='#1f77b4', label='Datos Reales', zorder=5)
-                ax.plot(sub_df['Fecha'], sub_df['Km_predicho'], color='#ff7f0e', linestyle='--', label='Tendencia Lineal')
-                
-                # Cálculo de Próximo Evento
-                ultimo = sub_df.iloc[-1]
-                tipo_normalizado = tipo_seleccionado.strip().lower()
-                # Búsqueda difusa para el intervalo
-                km_intervalo = 5000 # Default
-                for k, v in intervalos_km.items():
-                    if k in tipo_normalizado:
-                        km_intervalo = v
-                        break
-                
-                if coef > 0: # Solo predecir si el camión avanza
-                    km_objetivo = ultimo['Km'] + km_intervalo
-                    dias_restantes_aprox = (km_objetivo - ultimo['Km']) / coef
-                    fecha_objetivo_ordinal = (km_objetivo - intercept) / coef
+                if keywords:
+                    mask = df_vehiculo.apply(lambda x: any(k in str(x) for k in keywords))
+                    df_zona = df_vehiculo[mask]
                     
-                    try:
-                        fecha_estimada = date.fromordinal(int(fecha_objetivo_ordinal))
-                        
-                        # Añadir punto futuro al gráfico
-                        ax.scatter([fecha_estimada], [km_objetivo], color='red', s=100, marker='*', label='Próximo Mantenimiento')
-                        
-                        # Tarjetas de Métricas (KPIs)
-                        kpi1, kpi2, kpi3 = st.columns(3)
-                        kpi1.metric("Último Kilometraje", f"{int(ultimo['Km']):,} km")
-                        kpi2.metric("Intervalo Configurado", f"{km_intervalo:,} km")
-                        
-                        # Lógica de Semáforo para la Fecha
-                        dias_hasta_evento = (fecha_estimada - date.today()).days
-                        delta_color = "normal"
-                        if dias_hasta_evento < 7: delta_color = "inverse" # Rojo/Alerta
-                        
-                        kpi3.metric("Fecha Estimada", f"{fecha_estimada}", f"{int(dias_hasta_evento)} días restantes", delta_color=delta_color)
-
-                        st.markdown(f"**Análisis:** Basado en el uso actual ({coef:.1f} km/día), el componente **{tipo_seleccionado}** requerirá atención al llegar a **{int(km_objetivo):,} km**.")
-                        
-                    except Exception as e:
-                        st.warning("La fecha proyectada excede el rango calculable.")
+                    if not df_zona.empty:
+                        tipos_filtrados = df_zona.unique()
+                        st.caption(f"Mostrando mantenimientos relacionados con la zona seleccionada.")
+                    else:
+                        st.warning(f"No hay registros históricos para la zona {zona_activa} en este vehículo.")
+                        tipos_filtrados =
                 else:
-                    st.warning("⚠️ Anomalía detectada: La tendencia de kilometraje es negativa o cero.")
+                    tipos_filtrados =
 
-                ax.set_title(f"Evolución de Desgaste: {vehiculo_seleccionado} - {tipo_seleccionado}")
-                ax.set_xlabel("Fecha")
-                ax.set_ylabel("Kilometraje Acumulado")
-                ax.grid(True, alpha=0.3)
-                ax.legend()
-                st.pyplot(fig)
-                
-                with st.expander("Ver Datos Fuente y Descripciones Internas"):
-                    st.dataframe(sub_df])
+            if len(tipos_filtrados) > 0:
+                # Selector de Tipo (Ahora filtrado por la selección visual)
+                tipo_seleccionado = st.selectbox(
+                    "Sub-categoría de Mantenimiento", 
+                    tipos_filtrados,
+                    index=0
+                )
+
+                # --- ANÁLISIS PREDICTIVO (CORREGIDO) ---
+                # Aquí estaba el error anterior. Se corrige la sintaxis de filtrado.
+                sub_df = df_vehiculo == tipo_seleccionado].copy()
+
+                if len(sub_df) < 2:
+                    st.warning("⚠️ Datos insuficientes para generar una predicción fiable (mínimo 2 registros).")
+                    st.dataframe(sub_df) # CORREGIDO: Quitados los corchetes extra
+                else:
+                    # Modelo Predictivo
+                    X = sub_df[['Fecha_ordinal']]
+                    y = sub_df['Km']
+                    modelo = LinearRegression().fit(X, y)
+                    
+                    # Predicciones
+                    sub_df['Km_predicho'] = modelo.predict(X)
+                    coef = modelo.coef_ # Pendiente (Km por día)
+                    intercept = modelo.intercept_
+                    
+                    # Visualización Gráfica
+                    fig, ax = plt.subplots(figsize=(10, 4))
+                    ax.scatter(sub_df['Fecha'], sub_df['Km'], color='#1f77b4', label='Datos Reales', zorder=5)
+                    ax.plot(sub_df['Fecha'], sub_df['Km_predicho'], color='#ff7f0e', linestyle='--', label='Tendencia Lineal')
+                    
+                    # Cálculo de Próximo Evento
+                    ultimo = sub_df.iloc[-1]
+                    tipo_normalizado = str(tipo_seleccionado).strip().lower()
+                    # Búsqueda difusa para el intervalo
+                    km_intervalo = 5000 # Default
+                    for k, v in intervalos_km.items():
+                        if k in tipo_normalizado:
+                            km_intervalo = v
+                            break
+                    
+                    if coef > 0: # Solo predecir si el camión avanza
+                        km_objetivo = ultimo['Km'] + km_intervalo
+                        
+                        # Evitar errores de fecha si la proyección es muy lejana
+                        try:
+                            fecha_objetivo_ordinal = (km_objetivo - intercept) / coef
+                            fecha_estimada = date.fromordinal(int(fecha_objetivo_ordinal))
+                            
+                            # Añadir punto futuro al gráfico
+                            ax.scatter([fecha_estimada], [km_objetivo], color='red', s=100, marker='*', label='Próximo Mantenimiento')
+                            
+                            # Tarjetas de Métricas (KPIs)
+                            kpi1, kpi2, kpi3 = st.columns(3)
+                            kpi1.metric("Último Kilometraje", f"{int(ultimo['Km']):,} km")
+                            kpi2.metric("Intervalo Configurado", f"{km_intervalo:,} km")
+                            
+                            # Lógica de Semáforo para la Fecha
+                            dias_hasta_evento = (fecha_estimada - date.today()).days
+                            delta_color = "normal"
+                            if dias_hasta_evento < 7: delta_color = "inverse" # Rojo/Alerta
+                            
+                            kpi3.metric("Fecha Estimada", f"{fecha_estimada}", f"{int(dias_hasta_evento)} días restantes", delta_color=delta_color)
+
+                            st.markdown(f"**Análisis:** Basado en el uso actual ({coef:.1f} km/día), el componente **{tipo_seleccionado}** requerirá atención al llegar a **{int(km_objetivo):,} km**.")
+                            
+                        except (OverflowError, ValueError):
+                            st.warning("La fecha proyectada es demasiado lejana para ser calculada.")
+                    else:
+                        st.warning("⚠️ Anomalía detectada: La tendencia de kilometraje es negativa o cero.")
+
+                    ax.set_title(f"Evolución de Desgaste: {vehiculo_seleccionado} - {tipo_seleccionado}")
+                    ax.set_xlabel("Fecha")
+                    ax.set_ylabel("Kilometraje Acumulado")
+                    ax.grid(True, alpha=0.3)
+                    ax.legend()
+                    st.pyplot(fig)
+                    
+                    with st.expander("Ver Datos Fuente y Descripciones Internas"):
+                        st.dataframe(sub_df) # CORREGIDO: Quitados los corchetes extra
+            else:
+                st.info("Selecciona una zona válida o limpia el filtro para ver opciones.")
 
     except Exception as e:
         st.error(f"Error procesando el archivo: {str(e)}")
-        st.info("Asegúrate de que el Excel tenga las columnas: Vehiculo, Fecha, Km, Tipo, Descripcion")
+        st.info("Asegúrate de que el Excel tenga las columnas: Vehiculo, Fecha, Km, Tipo")
         
 else:
     # Estado inicial (Landing Page)
