@@ -31,25 +31,18 @@ def get_truck_svg(highlight_part):
         c_general = color_alert
 
     # Dibujo SVG (Simplificado)
-    svg_code = f"""
-    <svg width="400" height="200" viewBox="0 0 400 200" xmlns="http://www.w3.org/2000/svg">
-        <rect x="20" y="20" width="240" height="100" rx="5" fill="{c_general}" stroke="black" stroke-width="2"/>
-        
-        <path d="M260 120 L260 50 L300 50 L340 90 L340 120 Z" fill="{c_bateria}" stroke="black" stroke-width="2"/>
-        
-        <path d="M270 55 L300 55 L330 85 L270 85 Z" fill="#ADD8E6" stroke="black" stroke-width="1"/>
-        
-        <rect x="270" y="95" width="20" height="15" fill="{c_bateria}" stroke="white" stroke-width="1"/>
-        
-        <rect x="340" y="90" width="10" height="30" fill="{c_general}" stroke="black"/>
+   svg_code = f """<svg width="400" height="200" viewBox="0 0 400 200" xmlns="http://www.w3.org/2000/svg">
+<rect x="20" y="20" width="240" height="100" rx="5" fill="{c_general}" stroke="black" stroke-width="2"/>
+<path d="M260 120 L260 50 L300 50 L340 90 L340 120 Z" fill="{c_bateria}" stroke="black" stroke-width="2"/>
+<path d="M270 55 L300 55 L330 85 L270 85 Z" fill="#ADD8E6" stroke="black" stroke-width="1"/>
+<rect x="270" y="95" width="20" height="15" fill="{c_bateria}" stroke="white" stroke-width="1"/>
+<rect x="340" y="90" width="10" height="30" fill="{c_general}" stroke="black"/>
+<circle cx="60" cy="140" r="25" fill="{c_llantas}" stroke="black" stroke-width="3"/>
+<circle cx="120" cy="140" r="25" fill="{c_llantas}" stroke="black" stroke-width="3"/>
+<circle cx="300" cy="140" r="25" fill="{c_llantas}" stroke="black" stroke-width="3"/>
+<line x1="0" y1="165" x2="400" y2="165" stroke="#999" stroke-width="2"/>
+</svg>"""
 
-        <circle cx="60" cy="140" r="25" fill="{c_llantas}" stroke="black" stroke-width="3"/>
-        <circle cx="120" cy="140" r="25" fill="{c_llantas}" stroke="black" stroke-width="3"/>
-        <circle cx="300" cy="140" r="25" fill="{c_llantas}" stroke="black" stroke-width="3"/>
-        
-        <line x1="0" y1="165" x2="400" y2="165" stroke="#999" stroke-width="2"/>
-    </svg>
-    """
     return svg_code
 
 # --- LÓGICA DE PREDICCIÓN ---
