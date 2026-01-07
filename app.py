@@ -42,9 +42,8 @@ def get_truck_svg(highlight_part):
         <circle cx="60" cy="140" r="25" fill="{c_llantas}" stroke="black" stroke-width="3"/>
         <circle cx="120" cy="140" r="25" fill="{c_llantas}" stroke="black" stroke-width="3"/>
         <circle cx="300" cy="140" r="25" fill="{c_llantas}" stroke="black" stroke-width="3"/>
-        <line x1="0" y1="165" x2="400" y2="165" stroke="#999" stroke-width="2"/>
-        
-    """ </svg>
+        <line x1="0" y1="165" x2="400" y2="165" stroke="#999" stroke-width="2"/>""" 
+    </svg>
     
     return svg_code
 
