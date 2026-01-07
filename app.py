@@ -27,7 +27,7 @@ def get_truck_svg(highlight_part):
         c_llantas = color_alert
     elif highlight_part == "Batería":
         c_bateria = color_alert
-    elif highlight_part == "Parrilla/General":
+    elif highlight_part == "ServicioC":
         c_general = color_alert
 
     # OJO AQUÍ: La palabra 'svg_code' tiene 4 espacios antes (está indentada).
@@ -112,14 +112,14 @@ if uploaded_file:
     df_vehiculo = df[df['Vehiculo'] == vehiculo_seleccionado].copy()
 
     # Selector de Tipo de Mantenimiento (Para el SVG y Umbrales)
-    tipos_mantenimiento = ["Llantas", "Batería", "Parrilla/General"]
+    tipos_mantenimiento = ["Llantas", "Batería", "ServicioC"]
     seleccion_tipo = st.sidebar.selectbox("Analizar Componente", tipos_mantenimiento)
 
     # Definir intervalos según reglas del usuario
     intervalos = {
-        "Llantas": 40000,
-        "Batería": 30000,
-        "Parrilla/General": 15000 # Valor ejemplo
+        "Llantas": 50000,
+        "Batería": 50000,
+        "ServicioC": 5000 # Valor ejemplo
     }
     intervalo_actual = intervalos.get(seleccion_tipo, 10000)
 
