@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import LinearRegression
+from scikit-learn.linear_model import LinearRegression
 import datetime
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
