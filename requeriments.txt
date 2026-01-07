@@ -7,3 +7,4 @@ pyngrok
 scikit-learn
 streamlit-image-coordinates
 requests
+numpy
