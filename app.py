@@ -1,3 +1,16 @@
+# --- INICIO DEL PARCHE DE EMERGENCIA ---
+import subprocess
+import sys
+
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+try:
+    import sklearn
+except ImportError:
+    install('scikit-learn')
+    import sklearn
+
 import streamlit as st
 import pandas as pd
 import numpy as np
