@@ -22,6 +22,7 @@ y lo marca siempre como estimado, indicando la antiguedad del dato.
 Al volver a cargar el archivo de Startrack, todo se recalibra solo.
 """
 import re
+import traceback
 import unicodedata
 from datetime import date
 from itertools import combinations
@@ -295,6 +296,11 @@ def predecir(eventos_veh, est, tipo):
     objetivo = float(u['Km']) + intervalo
     faltan = objetivo - est['km_hoy']
     dias = faltan / est['tasa']
+    # pandas solo maneja fechas entre 1677 y 2262: si la tasa es minuscula el
+    # calculo se dispara y revienta. Se acota a +-100 anios.
+    if not np.isfinite(dias):
+        return None
+    dias = float(np.clip(dias, -36500, 36500))
     return {
         'Vehiculo': eventos_veh['Vehiculo'].iloc[0], 'Tipo': tipo,
         'Ultimo servicio': u['Fecha'].date(), 'Km ultimo': int(u['Km']),
@@ -326,90 +332,97 @@ if f_reg is None:
     st.info("Sube al menos el **Registro de Camiones y Pilotos** para comenzar.")
     st.stop()
 
-eventos, descartados = extraer_eventos(f_reg)
-st.success(f"{len(eventos)} eventos detectados en {eventos['Vehiculo'].nunique()} vehiculos.")
+try:
+    eventos, descartados = extraer_eventos(f_reg)
+    st.success(f"{len(eventos)} eventos detectados en {eventos['Vehiculo'].nunique()} vehiculos.")
 
-# --- Kilometraje ---
-km_manual, gps = None, None
-if f_km is not None:
-    m = pd.read_excel(f_km).dropna(subset=['Vehiculo'])
-    m['Fecha'] = pd.to_datetime(m['Fecha'], errors='coerce').dt.normalize()
-    m['Km'] = pd.to_numeric(m['Km'], errors='coerce')
-    km_manual = m.dropna(subset=['Fecha', 'Km'])[['Vehiculo', 'Fecha', 'Km']]
+    # --- Kilometraje ---
+    km_manual, gps = None, None
+    if f_km is not None:
+        m = pd.read_excel(f_km).dropna(subset=['Vehiculo'])
+        m['Fecha'] = pd.to_datetime(m['Fecha'], errors='coerce').dt.normalize()
+        m['Km'] = pd.to_numeric(m['Km'], errors='coerce')
+        km_manual = m.dropna(subset=['Fecha', 'Km'])[['Vehiculo', 'Fecha', 'Km']]
 
-if f_gps is not None:
-    try:
-        gps = cargar_startrack(f_gps)
-        st.info(f"Odometro GPS: **{len(gps)} lecturas diarias** de "
-                f"{gps['Vehiculo'].nunique()} vehiculos "
-                f"({gps['Fecha'].min().date()} a {gps['Fecha'].max().date()}).")
-    except Exception as e:
-        st.error(f"No pude leer el informe de Startrack: {e}")
+    if f_gps is not None:
+        try:
+            gps = cargar_startrack(f_gps)
+            st.info(f"Odometro GPS: **{len(gps)} lecturas diarias** de "
+                    f"{gps['Vehiculo'].nunique()} vehiculos "
+                    f"({gps['Fecha'].min().date()} a {gps['Fecha'].max().date()}).")
+        except Exception as e:
+            st.error(f"No pude leer el informe de Startrack: {e}")
 
-odo = construir_odometro(gps, km_manual)
-if odo.empty:
-    st.warning("Sin kilometraje no puedo predecir. Sube el archivo 2 o el 3.")
-    st.stop()
+    odo = construir_odometro(gps, km_manual)
+    if odo.empty:
+        st.warning("Sin kilometraje no puedo predecir. Sube el archivo 2 o el 3.")
+        st.stop()
 
-# pegar Km a cada evento (lectura mas cercana, +-3 dias)
-ev = eventos.sort_values('Fecha')
-ev = pd.merge_asof(ev, odo.sort_values('Fecha'), on='Fecha', by='Vehiculo',
-                   direction='nearest', tolerance=pd.Timedelta(days=3))
+    # pegar Km a cada evento (lectura mas cercana, +-3 dias)
+    ev = eventos.sort_values('Fecha')
+    ev = pd.merge_asof(ev, odo.sort_values('Fecha'), on='Fecha', by='Vehiculo',
+                       direction='nearest', tolerance=pd.Timedelta(days=3))
 
-# --- Frescura del dato ---
-estados = {v: estado_vehiculo(g) for v, g in odo.groupby('Vehiculo')}
-ant = [e['antiguedad'] for e in estados.values() if e]
-if ant:
-    peor = max(ant)
-    msg = (f"Kilometraje actualizado hace **{min(ant)}-{peor} dias**. "
-           f"Las cifras 'Km hoy' son **proyeccion** con la tasa km/dia; "
-           f"vuelve a cargar Startrack para recalibrar.")
-    (st.warning if peor > 30 else st.caption)(msg)
+    # --- Frescura del dato ---
+    estados = {v: estado_vehiculo(g) for v, g in odo.groupby('Vehiculo')}
+    ant = [e['antiguedad'] for e in estados.values() if e]
+    if ant:
+        peor = max(ant)
+        msg = (f"Kilometraje actualizado hace **{min(ant)}-{peor} dias**. "
+               f"Las cifras 'Km hoy' son **proyeccion** con la tasa km/dia; "
+               f"vuelve a cargar Startrack para recalibrar.")
+        (st.warning if peor > 30 else st.caption)(msg)
 
-# --- Resumen ---
-filas = []
-for veh, g in ev.groupby('Vehiculo'):
-    for tipo in g['Tipo'].unique():
-        p = predecir(g, estados.get(veh), tipo)
-        if p:
-            filas.append(p)
+    # --- Resumen ---
+    filas = []
+    for veh, g in ev.groupby('Vehiculo'):
+        for tipo in g['Tipo'].unique():
+            p = predecir(g, estados.get(veh), tipo)
+            if p:
+                filas.append(p)
 
-if filas:
-    res = pd.DataFrame(filas).sort_values('Dias restantes')
-    st.subheader("📌 Proximos mantenimientos")
+    if filas:
+        res = pd.DataFrame(filas).sort_values('Dias restantes')
+        st.subheader("📌 Proximos mantenimientos")
 
-    def color(f):
-        d = f['Dias restantes']
-        c = ('background-color:#ff6b6b' if d < 7 else
-             'background-color:#ffd93d' if d < 30 else
-             'background-color:#a8e6a3')
-        return ['' if col != 'Fecha estimada' else c for col in f.index]
+        def color(f):
+            d = f['Dias restantes']
+            c = ('background-color:#ff6b6b' if d < 7 else
+                 'background-color:#ffd93d' if d < 30 else
+                 'background-color:#a8e6a3')
+            return ['' if col != 'Fecha estimada' else c for col in f.index]
 
-    st.dataframe(res.style.apply(color, axis=1), use_container_width=True)
-    v = (res['Dias restantes'] < 0).sum()
-    if v:
-        st.error(f"⚠️ {v} mantenimiento(s) VENCIDO(s).")
+        st.dataframe(res.style.apply(color, axis=1), use_container_width=True)
+        v = (res['Dias restantes'] < 0).sum()
+        if v:
+            st.error(f"⚠️ {v} mantenimiento(s) VENCIDO(s).")
 
-# --- Detalle ---
-st.divider()
-c1, c2 = st.columns(2)
-veh = c1.selectbox("Vehiculo", sorted(ev['Vehiculo'].unique()))
-g = ev[ev['Vehiculo'] == veh]
-e = estados.get(veh)
-if e:
-    c2.metric("Km hoy (estimado)", f"{e['km_hoy']:,.0f}",
-              f"{e['tasa']:.0f} km/dia · medido al {e['fecha_lectura'].date()}")
+    # --- Detalle ---
+    st.divider()
+    c1, c2 = st.columns(2)
+    veh = c1.selectbox("Vehiculo", sorted(ev['Vehiculo'].unique()))
+    g = ev[ev['Vehiculo'] == veh]
+    e = estados.get(veh)
+    if e:
+        c2.metric("Km hoy (estimado)", f"{e['km_hoy']:,.0f}",
+                  f"{e['tasa']:.0f} km/dia · medido al {e['fecha_lectura'].date()}")
 
-st.subheader("📈 Kilometraje")
-s = odo[odo['Vehiculo'] == veh]
-if len(s) >= 2:
-    ch = s.set_index('Fecha')[['Km']]
-    st.line_chart(ch)
+    st.subheader("📈 Kilometraje")
+    s = odo[odo['Vehiculo'] == veh]
+    if len(s) >= 2:
+        ch = s.set_index('Fecha')[['Km']]
+        st.line_chart(ch)
 
-st.subheader("🔧 Eventos")
-st.dataframe(g[['Fecha', 'Tipo', 'Km', 'Confianza', 'Costo', 'Especificacion']],
-             use_container_width=True)
-
-with st.expander(f"🔍 Renglones para revisar ({len(descartados)} no clasificados)"):
-    st.dataframe(descartados[['Vehiculo', 'Fecha', 'Especificacion', 'Costo']],
+    st.subheader("🔧 Eventos")
+    st.dataframe(g[['Fecha', 'Tipo', 'Km', 'Confianza', 'Costo', 'Especificacion']],
                  use_container_width=True)
+
+    with st.expander(f"🔍 Renglones para revisar ({len(descartados)} no clasificados)"):
+        st.dataframe(descartados[['Vehiculo', 'Fecha', 'Especificacion', 'Costo']],
+                     use_container_width=True)
+
+except Exception:
+    st.error("Ocurrio un error procesando los archivos. Detalle tecnico abajo.")
+    st.code(traceback.format_exc(), language='text')
+    st.info("Copia esta traza para diagnosticar. La app no se cae: "
+            "puedes cambiar los archivos y volver a intentar.")
