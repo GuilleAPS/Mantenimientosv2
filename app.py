@@ -53,6 +53,42 @@ _PAT_LTS = (r'(1/2|medio|media|\d+(?:[.,]\d+)?|un[ao]?|dos|tres|cuatro|cinco)'
             r'\s*(litros?|galones?|cubetas?)\s+de\s+aceite([^,;.]{0,60})')
 
 
+
+# ==========================================================================
+# RENDER DE TABLAS
+# --------------------------------------------------------------------------
+# st.dataframe() y st.line_chart() serializan los datos con pyarrow / altair
+# (codigo nativo en C). En Streamlit Cloud esa ruta esta provocando un
+# Segmentation fault (el proceso muere sin traza de Python).
+#
+#   MODO_SEGURO = True   -> tablas en HTML puro. Cero pyarrow, cero altair.
+#   MODO_SEGURO = False  -> st.dataframe / st.line_chart normales (interactivos).
+#
+# Empieza en True. Si la app corre bien, el culpable era esa ruta nativa.
+# ==========================================================================
+MODO_SEGURO = True
+MAX_FILAS_TABLA = 300        # no volcar tablas enormes al navegador
+
+
+def mostrar_tabla(df, max_filas=MAX_FILAS_TABLA):
+    """Dibuja un DataFrame evitando pyarrow cuando MODO_SEGURO esta activo."""
+    if df is None or len(df) == 0:
+        st.caption("(sin datos)")
+        return
+    recortado = len(df) > max_filas
+    vista = df.head(max_filas)
+    if MODO_SEGURO:
+        st.markdown(
+            vista.to_html(index=False, escape=True, na_rep='',
+                          float_format=lambda x: f'{x:,.1f}'),
+            unsafe_allow_html=True)
+    else:
+        st.dataframe(vista, width='stretch', hide_index=True)
+    if recortado:
+        st.caption(f"Mostrando {max_filas} de {len(df):,} filas.")
+
+
+
 def norm(s):
     s = str(s).lower().strip()
     s = ''.join(c for c in unicodedata.normalize('NFD', s)
@@ -396,7 +432,7 @@ try:
             return '🟢 OK'
 
         res.insert(0, 'Estado', res['Dias restantes'].map(semaforo))
-        st.dataframe(res, width='stretch', hide_index=True)
+        mostrar_tabla(res)
         v = int((res['Dias restantes'] < 0).sum())
         if v:
             st.error(f"⚠️ {v} mantenimiento(s) VENCIDO(s).")
@@ -411,19 +447,17 @@ try:
         c2.metric("Km hoy (estimado)", f"{e['km_hoy']:,.0f}",
                   f"{e['tasa']:.0f} km/dia · medido al {e['fecha_lectura'].date()}")
 
-    st.subheader("📈 Kilometraje")
-    s = odo[odo['Vehiculo'] == veh]
-    if len(s) >= 2:
-        ch = s.set_index('Fecha')[['Km']]
-        st.line_chart(ch)
+    if not MODO_SEGURO:
+        st.subheader("📈 Kilometraje")
+        serie = odo[odo['Vehiculo'] == veh]
+        if len(serie) >= 2:
+            st.line_chart(serie.set_index('Fecha')[['Km']])
 
     st.subheader("🔧 Eventos")
-    st.dataframe(g[['Fecha', 'Tipo', 'Km', 'Confianza', 'Costo', 'Especificacion']],
-                 width='stretch')
+    mostrar_tabla(g[['Fecha', 'Tipo', 'Km', 'Confianza', 'Costo', 'Especificacion']])
 
     with st.expander(f"🔍 Renglones para revisar ({len(descartados)} no clasificados)"):
-        st.dataframe(descartados[['Vehiculo', 'Fecha', 'Especificacion', 'Costo']],
-                     width='stretch')
+        mostrar_tabla(descartados[['Vehiculo', 'Fecha', 'Especificacion', 'Costo']])
 
 except Exception:
     st.error("Ocurrio un error procesando los archivos. Detalle tecnico abajo.")
