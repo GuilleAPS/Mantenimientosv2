@@ -24,7 +24,7 @@ Al volver a cargar el archivo de Startrack, todo se recalibra solo.
 import re
 import traceback
 import unicodedata
-from datetime import date
+from datetime import date, timedelta
 from itertools import combinations
 
 import numpy as np
@@ -259,7 +259,7 @@ def tasa_km_dia(g, ventana=VENTANA_TASA):
     g = g[~g['Fecha'].duplicated(keep='last')]
     if len(g) < 2:
         return None
-    rec = g[g['Fecha'] >= g['Fecha'].max() - pd.Timedelta(days=ventana)]
+    rec = g[g['Fecha'] >= g['Fecha'].max() - pd.Timedelta(f'{int(ventana)}D')]
     if len(rec) >= 10:                      # serie densa -> medicion directa
         dias = (rec['Fecha'].iloc[-1] - rec['Fecha'].iloc[0]).days
         if dias > 0:
@@ -307,8 +307,7 @@ def predecir(eventos_veh, est, tipo):
         'Km hoy (est.)': int(est['km_hoy']), 'Km objetivo': int(objetivo),
         'Km restantes': int(faltan), 'km/dia': round(est['tasa'], 1),
         'Dias restantes': int(round(dias)),
-        'Fecha estimada': (pd.Timestamp(date.today())
-                           + pd.Timedelta(days=dias)).date(),
+        'Fecha estimada': date.today() + timedelta(days=int(round(dias))),
     }
 
 
@@ -361,7 +360,7 @@ try:
     # pegar Km a cada evento (lectura mas cercana, +-3 dias)
     ev = eventos.sort_values('Fecha')
     ev = pd.merge_asof(ev, odo.sort_values('Fecha'), on='Fecha', by='Vehiculo',
-                       direction='nearest', tolerance=pd.Timedelta(days=3))
+                       direction='nearest', tolerance=pd.Timedelta('3D'))
 
     # --- Frescura del dato ---
     estados = {v: estado_vehiculo(g) for v, g in odo.groupby('Vehiculo')}
@@ -385,15 +384,20 @@ try:
         res = pd.DataFrame(filas).sort_values('Dias restantes')
         st.subheader("📌 Proximos mantenimientos")
 
-        def color(f):
-            d = f['Dias restantes']
-            c = ('background-color:#ff6b6b' if d < 7 else
-                 'background-color:#ffd93d' if d < 30 else
-                 'background-color:#a8e6a3')
-            return ['' if col != 'Fecha estimada' else c for col in f.index]
+        # Semaforo como columna de TEXTO. No se usa el Styler de pandas:
+        # su conversion a Arrow provoca un Segmentation fault en Streamlit Cloud.
+        def semaforo(d):
+            if d < 0:
+                return '🔴 VENCIDO'
+            if d < 7:
+                return '🔴 Urgente'
+            if d < 30:
+                return '🟡 Proximo'
+            return '🟢 OK'
 
-        st.dataframe(res.style.apply(color, axis=1), use_container_width=True)
-        v = (res['Dias restantes'] < 0).sum()
+        res.insert(0, 'Estado', res['Dias restantes'].map(semaforo))
+        st.dataframe(res, width='stretch', hide_index=True)
+        v = int((res['Dias restantes'] < 0).sum())
         if v:
             st.error(f"⚠️ {v} mantenimiento(s) VENCIDO(s).")
 
@@ -415,11 +419,11 @@ try:
 
     st.subheader("🔧 Eventos")
     st.dataframe(g[['Fecha', 'Tipo', 'Km', 'Confianza', 'Costo', 'Especificacion']],
-                 use_container_width=True)
+                 width='stretch')
 
     with st.expander(f"🔍 Renglones para revisar ({len(descartados)} no clasificados)"):
         st.dataframe(descartados[['Vehiculo', 'Fecha', 'Especificacion', 'Costo']],
-                     use_container_width=True)
+                     width='stretch')
 
 except Exception:
     st.error("Ocurrio un error procesando los archivos. Detalle tecnico abajo.")
