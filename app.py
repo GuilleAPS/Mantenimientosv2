@@ -172,7 +172,19 @@ def cargar_startrack(archivo):
     Lee la hoja 'Detalle' del informe Resumen Diario de Startrack.
     Devuelve [Vehiculo, Fecha, Km_ini, Km_fin, Dist].
     """
-    d = pd.read_excel(archivo, sheet_name=HOJA_GPS, header=FILA_ENCABEZADO)
+    nombre = str(getattr(archivo, 'name', archivo)).lower()
+    # .xls (formato viejo, el que exporta Startrack) necesita el motor xlrd;
+    # .xlsx usa openpyxl. Se elige explicitamente para evitar sorpresas.
+    motor = 'xlrd' if nombre.endswith('.xls') else 'openpyxl'
+    try:
+        d = pd.read_excel(archivo, sheet_name=HOJA_GPS,
+                          header=FILA_ENCABEZADO, engine=motor)
+    except ImportError:
+        raise ImportError(
+            "Falta la libreria 'xlrd', necesaria para leer archivos .xls.\n"
+            "Agrega esta linea a requirements.txt y vuelve a desplegar:\n"
+            "    xlrd>=2.0.1\n"
+            "Alternativa rapida: abre el archivo en Excel y guardalo como .xlsx.")
     col = {norm(c): c for c in d.columns}
 
     def buscar(*claves):
