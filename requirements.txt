@@ -1,5 +1,16 @@
+# --------------------------------------------------------------------------
+# STACK FIJADO A PROPOSITO. No lo "actualices" sin probar.
+#
+# Con las versiones libres, uv instalaba pyarrow 25 + numpy 2.5, y CUALQUIER
+# st.dataframe() provocaba un Segmentation fault en Streamlit Cloud (el proceso
+# muere sin traza de Python -> pantalla "Oh no"). Streamlit usa pyarrow para
+# serializar toda tabla nativa, por eso fallaban todas por igual.
+#
+# Estas versiones son un conjunto coherente y probado.
+# --------------------------------------------------------------------------
 streamlit>=1.30,<2.0
 pandas>=2.2,<3.0
-numpy>=1.26,<3.0
+numpy>=1.26,<2.3
+pyarrow>=17,<20
 openpyxl>=3.1
 xlrd>=2.0.1
