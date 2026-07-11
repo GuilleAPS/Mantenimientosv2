@@ -40,9 +40,19 @@ VEHICULOS = {'024BCK', '109BYW', '146BGJ', '216BFH', '217BJG', '264BJY',
              '544BPQ', '576BLH', '599BYL', '676BRC'}
 HOJAS_IGNORAR = {'servicios', 'registro', 'retroexcavadora'}
 
-INTERVALOS_KM = {'servicioc': 5000, 'serviciot': 10000,
-                 'llantas': 50000, 'baterias': 50000}
+INTERVALOS_KM = {'servicioc': 5000, 'serviciot': 10000, 'llantas': 50000}
 INTERVALO_KM_DEFAULT = 3000
+
+# Tipos que SI se predicen por kilometraje.
+# 'Baterias' queda FUERA a proposito: cada vehiculo tiene un solo cambio
+# registrado, asi que no hay ningun intervalo observable con el cual calibrar
+# un umbral en km. Predecirlas seria inventar el numero. Se muestran aparte,
+# como referencia. Para incluirlas: agrega 'Baterias' aqui y define su
+# intervalo en INTERVALOS_KM.
+TIPOS_PREDECIR = {'ServicioC', 'ServicioT', 'Llantas'}
+
+# En los archivos, un Km en 0 significa "no capturado", no "odometro en cero".
+KM_MINIMO_VALIDO = 1
 
 MIN_LITROS_MOTOR = {'camion': 8, 'cabezal': 25}
 ACEITE_NO_MOTOR = (r'80w90|85w140|\b85w|\b80w|multigear|spirax|hidraulic|'
@@ -247,6 +257,7 @@ def cargar_startrack(archivo):
         'Km_fin': pd.to_numeric(d[c_fin], errors='coerce') if c_fin else np.nan,
         'Dist': pd.to_numeric(d[c_dis], errors='coerce') if c_dis else np.nan,
     }).dropna(subset=['Vehiculo', 'Fecha', 'Km_ini'])
+    out = out[out['Km_ini'] >= KM_MINIMO_VALIDO]
     out['Fecha'] = out['Fecha'].dt.normalize()
     out = out[out['Vehiculo'].isin(VEHICULOS)]
     return out.sort_values(['Vehiculo', 'Fecha']).reset_index(drop=True)
@@ -324,7 +335,10 @@ def estado_vehiculo(odo_veh):
 def predecir(eventos_veh, est, tipo):
     if est is None or not est['tasa']:
         return None
+    if tipo not in TIPOS_PREDECIR:
+        return None                      # p.ej. Baterias: sin intervalo calibrable
     sub = eventos_veh[eventos_veh['Tipo'] == tipo].dropna(subset=['Km'])
+    sub = sub[sub['Km'] >= KM_MINIMO_VALIDO]   # Km en 0 = dato no capturado
     if sub.empty:
         return None
     u = sub.sort_values('Fecha').iloc[-1]
@@ -377,6 +391,8 @@ try:
         m = pd.read_excel(f_km).dropna(subset=['Vehiculo'])
         m['Fecha'] = pd.to_datetime(m['Fecha'], errors='coerce').dt.normalize()
         m['Km'] = pd.to_numeric(m['Km'], errors='coerce')
+        # Un Km de 0 (o negativo) es un dato NO capturado, no una lectura real.
+        m.loc[m['Km'] < KM_MINIMO_VALIDO, 'Km'] = np.nan
         km_manual = m.dropna(subset=['Fecha', 'Km'])[['Vehiculo', 'Fecha', 'Km']]
 
     if f_gps is not None:
@@ -436,6 +452,28 @@ try:
         v = int((res['Dias restantes'] < 0).sum())
         if v:
             st.error(f"⚠️ {v} mantenimiento(s) VENCIDO(s).")
+
+    # --- Baterias: referencia, NO prediccion ---
+    bat = ev[ev['Tipo'] == 'Baterias'].copy()
+    if not bat.empty:
+        st.subheader("🔋 Baterias (referencia)")
+        st.caption("No se predicen por kilometraje: solo hay un cambio registrado "
+                   "por vehiculo, asi que no existe un intervalo observable con el "
+                   "cual calibrar. Se listan los ultimos cambios como referencia.")
+        ult_bat = (bat.sort_values('Fecha').groupby('Vehiculo').last()
+                      .reset_index()[['Vehiculo', 'Fecha', 'Km', 'Especificacion']])
+        ult_bat['Fecha'] = ult_bat['Fecha'].dt.date
+        ult_bat['Meses desde el cambio'] = [
+            round((date.today() - f).days / 30.4) for f in ult_bat['Fecha']]
+        mostrar_tabla(ult_bat.sort_values('Meses desde el cambio', ascending=False))
+
+    # --- Vehiculos que no se pudieron predecir ---
+    sin_km = sorted(set(ev['Vehiculo']) - set(res['Vehiculo'])) if filas else []
+    if sin_km:
+        st.warning(
+            f"Sin prediccion para: **{', '.join(sin_km)}**. "
+            "Les falta un Km valido en el ultimo servicio (el GPS solo cubre "
+            "desde marzo 2026, y en el archivo manual el Km viene vacio o en 0).")
 
     # --- Detalle ---
     st.divider()
