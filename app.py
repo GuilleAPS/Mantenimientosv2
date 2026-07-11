@@ -65,38 +65,38 @@ _PAT_LTS = (r'(1/2|medio|media|\d+(?:[.,]\d+)?|un[ao]?|dos|tres|cuatro|cinco)'
 
 
 # ==========================================================================
-# RENDER DE TABLAS
+# RENDER: NATIVO vs SEGURO
 # --------------------------------------------------------------------------
-# st.dataframe() y st.line_chart() serializan los datos con pyarrow / altair
-# (codigo nativo en C). En Streamlit Cloud esa ruta esta provocando un
-# Segmentation fault (el proceso muere sin traza de Python).
+# st.dataframe() y st.line_chart() serializan con pyarrow / altair (codigo
+# nativo en C). En Streamlit Cloud alguno de esos renders provoca un
+# Segmentation fault: el proceso muere sin dejar traza de Python.
 #
-#   MODO_SEGURO = True   -> tablas en HTML puro. Cero pyarrow, cero altair.
-#   MODO_SEGURO = False  -> st.dataframe / st.line_chart normales (interactivos).
-#
-# Empieza en True. Si la app corre bien, el culpable era esa ruta nativa.
+# El origen exacto no se puede reproducir fuera del contenedor, asi que se
+# aisla aqui: cada render se activa por separado desde la barra lateral.
+# Empieza con todos apagados (HTML puro, siempre funciona) y ve encendiendo
+# uno a la vez para identificar cual revienta. Cuando lo sepas, deja ese
+# apagado y los demas encendidos.
 # ==========================================================================
-MODO_SEGURO = True
-MAX_FILAS_TABLA = 300        # no volcar tablas enormes al navegador
+MAX_FILAS_TABLA = 300      # no volcar tablas enormes al navegador
+NATIVO = {}                # lo llena la barra lateral
 
 
-def mostrar_tabla(df, max_filas=MAX_FILAS_TABLA):
-    """Dibuja un DataFrame evitando pyarrow cuando MODO_SEGURO esta activo."""
+def mostrar_tabla(df, clave, max_filas=MAX_FILAS_TABLA):
+    """Dibuja un DataFrame. Usa st.dataframe solo si NATIVO[clave] esta activo."""
     if df is None or len(df) == 0:
         st.caption("(sin datos)")
         return
     recortado = len(df) > max_filas
     vista = df.head(max_filas)
-    if MODO_SEGURO:
+    if NATIVO.get(clave):
+        st.dataframe(vista, width='stretch', hide_index=True)
+    else:
         st.markdown(
             vista.to_html(index=False, escape=True, na_rep='',
                           float_format=lambda x: f'{x:,.1f}'),
             unsafe_allow_html=True)
-    else:
-        st.dataframe(vista, width='stretch', hide_index=True)
     if recortado:
         st.caption(f"Mostrando {max_filas} de {len(df):,} filas.")
-
 
 
 def norm(s):
@@ -377,6 +377,16 @@ with st.sidebar:
                             type=['xlsx'],
                             help="Tus Km capturados a mano. Sirven de ancla.")
 
+    st.divider()
+    st.subheader("Render nativo")
+    st.caption("Enciende UNO a la vez. Si la app muere (pantalla 'Oh no'), "
+               "ese es el que provoca el Segmentation fault.")
+    NATIVO['predicciones'] = st.checkbox("Tabla: proximos mantenimientos", False)
+    NATIVO['baterias'] = st.checkbox("Tabla: baterias", False)
+    NATIVO['eventos'] = st.checkbox("Tabla: eventos del vehiculo", False)
+    NATIVO['revisar'] = st.checkbox("Tabla: revisar (1,030 filas)", False)
+    NATIVO['grafica'] = st.checkbox("Grafica: kilometraje (line_chart)", False)
+
 if f_reg is None:
     st.info("Sube al menos el **Registro de Camiones y Pilotos** para comenzar.")
     st.stop()
@@ -448,7 +458,7 @@ try:
             return '🟢 OK'
 
         res.insert(0, 'Estado', res['Dias restantes'].map(semaforo))
-        mostrar_tabla(res)
+        mostrar_tabla(res, 'predicciones')
         v = int((res['Dias restantes'] < 0).sum())
         if v:
             st.error(f"⚠️ {v} mantenimiento(s) VENCIDO(s).")
@@ -465,7 +475,8 @@ try:
         ult_bat['Fecha'] = ult_bat['Fecha'].dt.date
         ult_bat['Meses desde el cambio'] = [
             round((date.today() - f).days / 30.4) for f in ult_bat['Fecha']]
-        mostrar_tabla(ult_bat.sort_values('Meses desde el cambio', ascending=False))
+        mostrar_tabla(ult_bat.sort_values('Meses desde el cambio', ascending=False),
+                      'baterias')
 
     # --- Vehiculos que no se pudieron predecir ---
     sin_km = sorted(set(ev['Vehiculo']) - set(res['Vehiculo'])) if filas else []
@@ -485,17 +496,24 @@ try:
         c2.metric("Km hoy (estimado)", f"{e['km_hoy']:,.0f}",
                   f"{e['tasa']:.0f} km/dia · medido al {e['fecha_lectura'].date()}")
 
-    if not MODO_SEGURO:
-        st.subheader("📈 Kilometraje")
-        serie = odo[odo['Vehiculo'] == veh]
-        if len(serie) >= 2:
-            st.line_chart(serie.set_index('Fecha')[['Km']])
+    st.subheader("📈 Kilometraje")
+    serie = odo[odo['Vehiculo'] == veh].sort_values('Fecha')
+    if len(serie) < 2:
+        st.caption("(menos de 2 lecturas)")
+    elif NATIVO.get('grafica'):
+        st.line_chart(serie.set_index('Fecha')[['Km']])
+    else:
+        st.caption(f"{len(serie)} lecturas · {serie['Km'].min():,.0f} a "
+                   f"{serie['Km'].max():,.0f} km "
+                   f"({serie['Fecha'].min().date()} a {serie['Fecha'].max().date()})")
 
     st.subheader("🔧 Eventos")
-    mostrar_tabla(g[['Fecha', 'Tipo', 'Km', 'Confianza', 'Costo', 'Especificacion']])
+    mostrar_tabla(g[['Fecha', 'Tipo', 'Km', 'Confianza', 'Costo', 'Especificacion']],
+                  'eventos')
 
     with st.expander(f"🔍 Renglones para revisar ({len(descartados)} no clasificados)"):
-        mostrar_tabla(descartados[['Vehiculo', 'Fecha', 'Especificacion', 'Costo']])
+        mostrar_tabla(descartados[['Vehiculo', 'Fecha', 'Especificacion', 'Costo']],
+                      'revisar')
 
 except Exception:
     st.error("Ocurrio un error procesando los archivos. Detalle tecnico abajo.")
