@@ -65,37 +65,35 @@ _PAT_LTS = (r'(1/2|medio|media|\d+(?:[.,]\d+)?|un[ao]?|dos|tres|cuatro|cinco)'
 
 
 # ==========================================================================
-# RENDER: NATIVO vs SEGURO
+# RENDER DE TABLAS
 # --------------------------------------------------------------------------
-# st.dataframe() y st.line_chart() serializan con pyarrow / altair (codigo
-# nativo en C). En Streamlit Cloud alguno de esos renders provoca un
-# Segmentation fault: el proceso muere sin dejar traza de Python.
-#
-# El origen exacto no se puede reproducir fuera del contenedor, asi que se
-# aisla aqui: cada render se activa por separado desde la barra lateral.
-# Empieza con todos apagados (HTML puro, siempre funciona) y ve encendiendo
-# uno a la vez para identificar cual revienta. Cuando lo sepas, deja ese
-# apagado y los demas encendidos.
+# NOTA HISTORICA: con pyarrow 25 CUALQUIER st.dataframe() provocaba un
+# Segmentation fault en Streamlit Cloud. Se resolvio fijando pyarrow<20 en
+# requirements.txt. No quites ese tope.
 # ==========================================================================
 MAX_FILAS_TABLA = 300      # no volcar tablas enormes al navegador
-NATIVO = {}                # lo llena la barra lateral
+
+# Semaforo. El orden define la prioridad y el filtro de la barra lateral.
+ORDEN_ESTADOS = ['🔴 VENCIDO', '🟠 Urgente', '🟡 Proximo', '🟢 OK']
+TODOS_LOS_TIPOS = ['ServicioC', 'ServicioT', 'Llantas', 'Baterias']
 
 
-def mostrar_tabla(df, clave, max_filas=MAX_FILAS_TABLA):
-    """Dibuja un DataFrame. Usa st.dataframe solo si NATIVO[clave] esta activo."""
+def semaforo(dias):
+    if dias < 0:
+        return '🔴 VENCIDO'
+    if dias < 7:
+        return '🟠 Urgente'
+    if dias < 30:
+        return '🟡 Proximo'
+    return '🟢 OK'
+
+
+def mostrar_tabla(df, max_filas=MAX_FILAS_TABLA):
     if df is None or len(df) == 0:
-        st.caption("(sin datos)")
+        st.caption("(sin datos para este filtro)")
         return
-    recortado = len(df) > max_filas
-    vista = df.head(max_filas)
-    if NATIVO.get(clave):
-        st.dataframe(vista, width='stretch', hide_index=True)
-    else:
-        st.markdown(
-            vista.to_html(index=False, escape=True, na_rep='',
-                          float_format=lambda x: f'{x:,.1f}'),
-            unsafe_allow_html=True)
-    if recortado:
+    st.dataframe(df.head(max_filas), width='stretch', hide_index=True)
+    if len(df) > max_filas:
         st.caption(f"Mostrando {max_filas} de {len(df):,} filas.")
 
 
@@ -378,14 +376,14 @@ with st.sidebar:
                             help="Tus Km capturados a mano. Sirven de ancla.")
 
     st.divider()
-    st.subheader("Render nativo")
-    st.caption("Enciende UNO a la vez. Si la app muere (pantalla 'Oh no'), "
-               "ese es el que provoca el Segmentation fault.")
-    NATIVO['predicciones'] = st.checkbox("Tabla: proximos mantenimientos", False)
-    NATIVO['baterias'] = st.checkbox("Tabla: baterias", False)
-    NATIVO['eventos'] = st.checkbox("Tabla: eventos del vehiculo", False)
-    NATIVO['revisar'] = st.checkbox("Tabla: revisar (1,030 filas)", False)
-    NATIVO['grafica'] = st.checkbox("Grafica: kilometraje (line_chart)", False)
+    st.header("Filtros")
+    tipos_sel = st.multiselect(
+        "Tipo de mantenimiento",
+        options=TODOS_LOS_TIPOS, default=TODOS_LOS_TIPOS,
+        help="Baterias se muestran aparte: no se predicen por kilometraje.")
+    estados_sel = st.multiselect(
+        "Prioridad", options=ORDEN_ESTADOS, default=ORDEN_ESTADOS,
+        help="Filtra la tabla de proximos mantenimientos por urgencia.")
 
 if f_reg is None:
     st.info("Sube al menos el **Registro de Camiones y Pilotos** para comenzar.")
@@ -442,55 +440,74 @@ try:
             if p:
                 filas.append(p)
 
-    if filas:
-        res = pd.DataFrame(filas).sort_values('Dias restantes')
-        st.subheader("📌 Proximos mantenimientos")
-
-        # Semaforo como columna de TEXTO. No se usa el Styler de pandas:
-        # su conversion a Arrow provoca un Segmentation fault en Streamlit Cloud.
-        def semaforo(d):
-            if d < 0:
-                return '🔴 VENCIDO'
-            if d < 7:
-                return '🔴 Urgente'
-            if d < 30:
-                return '🟡 Proximo'
-            return '🟢 OK'
-
+    res = pd.DataFrame(filas)
+    if not res.empty:
         res.insert(0, 'Estado', res['Dias restantes'].map(semaforo))
-        mostrar_tabla(res, 'predicciones')
-        v = int((res['Dias restantes'] < 0).sum())
-        if v:
-            st.error(f"⚠️ {v} mantenimiento(s) VENCIDO(s).")
+        res = res.sort_values('Dias restantes').reset_index(drop=True)
 
-    # --- Baterias: referencia, NO prediccion ---
-    bat = ev[ev['Tipo'] == 'Baterias'].copy()
-    if not bat.empty:
-        st.subheader("🔋 Baterias (referencia)")
-        st.caption("No se predicen por kilometraje: solo hay un cambio registrado "
-                   "por vehiculo, asi que no existe un intervalo observable con el "
-                   "cual calibrar. Se listan los ultimos cambios como referencia.")
-        ult_bat = (bat.sort_values('Fecha').groupby('Vehiculo').last()
-                      .reset_index()[['Vehiculo', 'Fecha', 'Km', 'Especificacion']])
-        ult_bat['Fecha'] = ult_bat['Fecha'].dt.date
-        ult_bat['Meses desde el cambio'] = [
-            round((date.today() - f).days / 30.4) for f in ult_bat['Fecha']]
-        mostrar_tabla(ult_bat.sort_values('Meses desde el cambio', ascending=False),
-                      'baterias')
+    # --- Marcadores por prioridad (siempre sobre el total, sin filtrar) ---
+    if not res.empty:
+        cols = st.columns(len(ORDEN_ESTADOS))
+        for col, est_nom in zip(cols, ORDEN_ESTADOS):
+            col.metric(est_nom, int((res['Estado'] == est_nom).sum()))
 
-    # --- Vehiculos que no se pudieron predecir ---
-    sin_km = sorted(set(ev['Vehiculo']) - set(res['Vehiculo'])) if filas else []
-    if sin_km:
-        st.warning(
-            f"Sin prediccion para: **{', '.join(sin_km)}**. "
-            "Les falta un Km valido en el ultimo servicio (el GPS solo cubre "
-            "desde marzo 2026, y en el archivo manual el Km viene vacio o en 0).")
+    # ======================================================================
+    # PROXIMOS MANTENIMIENTOS  (filtrado por Tipo y Prioridad)
+    # ======================================================================
+    tipos_pred = [t for t in tipos_sel if t in TIPOS_PREDECIR]
+    if tipos_pred:
+        st.subheader("📌 Proximos mantenimientos")
+        vista = res[res['Tipo'].isin(tipos_pred) &
+                    res['Estado'].isin(estados_sel)] if not res.empty else res
 
-    # --- Detalle ---
+        if res.empty:
+            st.caption("(sin predicciones)")
+        elif vista.empty:
+            st.info("Ningun mantenimiento coincide con los filtros seleccionados.")
+        else:
+            st.caption(f"{len(vista)} de {len(res)} mantenimientos · "
+                       f"tipos: {', '.join(tipos_pred)}")
+            mostrar_tabla(vista)
+            venc = int((vista['Estado'] == '🔴 VENCIDO').sum())
+            urg = int((vista['Estado'] == '🟠 Urgente').sum())
+            if venc:
+                st.error(f"⚠️ {venc} VENCIDO(s) en la seleccion actual.")
+            if urg:
+                st.warning(f"🟠 {urg} vence(n) esta semana.")
+
+    # ======================================================================
+    # BATERIAS  (referencia, no prediccion)
+    # ======================================================================
+    if 'Baterias' in tipos_sel:
+        bat = ev[ev['Tipo'] == 'Baterias']
+        if not bat.empty:
+            st.subheader("🔋 Baterias (referencia)")
+            st.caption("No se predicen por kilometraje: solo hay un cambio "
+                       "registrado por vehiculo, asi que no existe intervalo "
+                       "observable para calibrar un umbral en km.")
+            ult = (bat.sort_values('Fecha').groupby('Vehiculo').last().reset_index()
+                      [['Vehiculo', 'Fecha', 'Km', 'Especificacion']])
+            ult['Fecha'] = ult['Fecha'].dt.date
+            ult.insert(1, 'Meses desde el cambio',
+                       [round((date.today() - f).days / 30.4) for f in ult['Fecha']])
+            mostrar_tabla(ult.sort_values('Meses desde el cambio', ascending=False))
+
+    # --- Vehiculos sin prediccion posible ---
+    if not res.empty:
+        sin_km = sorted(set(ev['Vehiculo']) - set(res['Vehiculo']))
+        if sin_km:
+            st.warning(
+                f"Sin prediccion para: **{', '.join(sin_km)}**. Les falta un Km "
+                "valido en el ultimo servicio (el GPS cubre desde marzo 2026, y en "
+                "el archivo manual el Km viene vacio o en 0).")
+
+    # ======================================================================
+    # DETALLE POR VEHICULO
+    # ======================================================================
     st.divider()
-    c1, c2 = st.columns(2)
+    c1, c2 = st.columns([1, 2])
     veh = c1.selectbox("Vehiculo", sorted(ev['Vehiculo'].unique()))
-    g = ev[ev['Vehiculo'] == veh]
+    g = ev[(ev['Vehiculo'] == veh) & (ev['Tipo'].isin(tipos_sel))]
     e = estados.get(veh)
     if e:
         c2.metric("Km hoy (estimado)", f"{e['km_hoy']:,.0f}",
@@ -498,22 +515,17 @@ try:
 
     st.subheader("📈 Kilometraje")
     serie = odo[odo['Vehiculo'] == veh].sort_values('Fecha')
-    if len(serie) < 2:
-        st.caption("(menos de 2 lecturas)")
-    elif NATIVO.get('grafica'):
+    if len(serie) >= 2:
         st.line_chart(serie.set_index('Fecha')[['Km']])
     else:
-        st.caption(f"{len(serie)} lecturas · {serie['Km'].min():,.0f} a "
-                   f"{serie['Km'].max():,.0f} km "
-                   f"({serie['Fecha'].min().date()} a {serie['Fecha'].max().date()})")
+        st.caption("(menos de 2 lecturas de odometro)")
 
     st.subheader("🔧 Eventos")
-    mostrar_tabla(g[['Fecha', 'Tipo', 'Km', 'Confianza', 'Costo', 'Especificacion']],
-                  'eventos')
+    mostrar_tabla(g[['Fecha', 'Tipo', 'Km', 'Confianza', 'Costo', 'Especificacion']]
+                  .sort_values('Fecha', ascending=False))
 
     with st.expander(f"🔍 Renglones para revisar ({len(descartados)} no clasificados)"):
-        mostrar_tabla(descartados[['Vehiculo', 'Fecha', 'Especificacion', 'Costo']],
-                      'revisar')
+        mostrar_tabla(descartados[['Vehiculo', 'Fecha', 'Especificacion', 'Costo']])
 
 except Exception:
     st.error("Ocurrio un error procesando los archivos. Detalle tecnico abajo.")
